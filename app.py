@@ -10,6 +10,8 @@ How it works
    Only streamlit + pypdf are strictly needed; every other package has a built-in backup.
 5. Translates the farmer's question (English / Urdu / Roman Urdu) into an English search query (Groq)
 6. Finds the most relevant FAQ chunks and Groq writes the answer in English and Urdu
+7. Extras: voice messages (Groq Whisper), listen (gTTS), WhatsApp share, Urdu interface,
+   large text, and your own logo (logo.png in the repo)
 
 Run locally:   streamlit run app.py
 Secret needed: GROQ_API_KEY
@@ -95,6 +97,7 @@ header[data-testid="stHeader"] {background: transparent; height: 0;}
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);}
 .chat-header .logo {font-size: 2rem; background: #fff; border-radius: 50%; width: 52px; height: 52px;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;}
+.chat-header .logo img {width: 46px; height: 46px; object-fit: contain; border-radius: 50%;}
 .chat-header .title {font-weight: 700; font-size: 1.15rem; line-height: 1.2;}
 .chat-header .sub {font-size: 0.8rem; opacity: 0.9;}
 .chat-header .dot {display: inline-block; width: 8px; height: 8px; border-radius: 50%;
@@ -133,6 +136,11 @@ header[data-testid="stHeader"] {background: transparent; height: 0;}
   background: #13945f; animation: blink 1.4s infinite both;}
 .typing span:nth-child(2) {animation-delay: 0.2s;} .typing span:nth-child(3) {animation-delay: 0.4s;}
 @keyframes blink {0%, 80%, 100% {opacity: 0.2;} 40% {opacity: 1;}}
+/* toolbar under the header: always one row, also on phones */
+[data-testid="stHorizontalBlock"]:has(.toolbar) {flex-wrap: nowrap !important; gap: 0.4rem;}
+[data-testid="stHorizontalBlock"]:has(.toolbar) > div {min-width: 0 !important; flex: 1 1 0 !important;
+  width: auto !important;}
+[data-testid="stElementContainer"]:has(> div .toolbar) {display: none;}
 .disclaimer {font-size: 0.72rem; opacity: 0.6; text-align: center; margin-top: 0.4rem;}
 </style>
 """, unsafe_allow_html=True)
@@ -586,10 +594,139 @@ def now_text():
 
 
 # =====================================================================
-# SETTINGS (stored in session so the ⚙️ popover can change them)
+# NEW FEATURES: voice, listening, WhatsApp, logo, interface language
 # =====================================================================
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+UI_TEXT = {
+    "en": {
+        "settings": "⚙️ Settings", "new_chat": "🗑️ New chat", "save": "📥 Save chat",
+        "ui_lang": "Interface language", "big_text": "🔠 Large text",
+        "level": "Technical level", "size": "Response size", "answer_lang": "Answer language",
+        "voice_lang": "Voice message language", "model": "AI model (open-source, Groq)",
+        "sources": "Show sources", "admin": "🛠️ Admin", "online": "Online",
+        "welcome": ("**Assalam-o-Alaikum! 👋** I am **Punjab Livestock Rehnuma**, the assistant of the "
+                    "Livestock & Dairy Development Department, Punjab. Ask me about animal diseases, "
+                    "vaccination, breeding, feeding, the Livestock Card and department services. "
+                    "Type, or 🎤 record a voice message, in English, اردو or Roman Urdu."),
+        "tap": "Tap a question", "also": "You can also ask", "typing": "Rehnuma is typing…",
+        "listening": "Listening to your voice message…", "input": "Type your question",
+        "voice": "🎤 Record a voice message", "listen": "🔊 Listen", "whatsapp": "Share on WhatsApp",
+        "disclaimer": "General guidance only. For sick animals consult a veterinary doctor or call",
+        "no_voice": "Sorry, the voice message could not be understood. Please try again or type.",
+        "tts_fail": "Audio is not available right now.",
+    },
+    "ur": {
+        "settings": "⚙️ ترتیبات", "new_chat": "🗑️ نئی گفتگو", "save": "📥 گفتگو محفوظ کریں",
+        "ui_lang": "ایپ کی زبان", "big_text": "🔠 بڑا لکھائی",
+        "level": "تکنیکی سطح", "size": "جواب کی لمبائی", "answer_lang": "جواب کی زبان",
+        "voice_lang": "صوتی پیغام کی زبان", "model": "اے آئی ماڈل (Groq)",
+        "sources": "حوالہ جات دکھائیں", "admin": "🛠️ ایڈمن", "online": "آن لائن",
+        "welcome": ("**السلام علیکم! 👋** میں **پنجاب لائیو سٹاک رہنما** ہوں، محکمہ لائیو سٹاک و ڈیری ڈویلپمنٹ پنجاب "
+                    "کا مددگار۔ جانوروں کی بیماریوں، ویکسینیشن، نسل کشی، خوراک، لائیو سٹاک کارڈ اور محکمے کی خدمات "
+                    "کے بارے میں سوال لکھیں یا 🎤 آواز میں پیغام ریکارڈ کریں۔"),
+        "tap": "سوال منتخب کریں", "also": "مزید پوچھیں", "typing": "رہنما لکھ رہا ہے…",
+        "listening": "آپ کا صوتی پیغام سنا جا رہا ہے…", "input": "اپنا سوال لکھیں",
+        "voice": "🎤 آواز میں سوال ریکارڈ کریں", "listen": "🔊 سنیں", "whatsapp": "واٹس ایپ پر بھیجیں",
+        "disclaimer": "یہ عمومی رہنمائی ہے۔ بیمار جانور کے لیے ویٹرنری ڈاکٹر سے رجوع کریں یا کال کریں",
+        "no_voice": "معذرت، صوتی پیغام سمجھ نہیں آیا۔ دوبارہ کوشش کریں یا لکھ کر پوچھیں۔",
+        "tts_fail": "آواز اس وقت دستیاب نہیں۔",
+    },
+}
+
+TECH_LABELS_UR = {"👨‍🌾 Farmer (simple)": "👨‍🌾 کسان (آسان)",
+                  "🧑‍🏫 Extension worker (moderate)": "🧑‍🏫 فیلڈ اسٹاف (درمیانہ)",
+                  "🩺 Veterinary expert (technical)": "🩺 ویٹرنری ماہر (تکنیکی)"}
+SIZE_LABELS_UR = {"Short": "مختصر", "Medium": "درمیانہ", "Detailed": "تفصیلی"}
+VOICE_LANGS = {"اردو": "ur", "English": "en"}
+WHISPER_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo"]
+
+
+def find_logo():
+    folder = os.path.dirname(os.path.abspath(__file__))
+    for name in ("logo.png", "logo.jpg", "logo.jpeg", "logo.webp"):
+        path = os.path.join(folder, name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def logo_html(path):
+    import base64
+    if not path:
+        return '<div class="logo">🐄</div>'
+    ext = path.rsplit(".", 1)[-1].replace("jpg", "jpeg")
+    data = base64.b64encode(open(path, "rb").read()).decode()
+    return f'<div class="logo"><img src="data:image/{ext};base64,{data}" alt="logo"></div>'
+
+
+def clean_for_speech(text):
+    text = re.sub(r"[*#_`>|]", " ", text)
+    text = re.sub(r"^\s*[-•]\s*", "", text, flags=re.M)
+    return re.sub(r"\s+", " ", text).strip()[:2500]
+
+
+@st.cache_data(show_spinner=False, max_entries=200)
+def text_to_speech(text, lang):
+    """Returns MP3 bytes. Uses gTTS (free Google voice, supports Urdu and English)."""
+    from gtts import gTTS
+    buffer = io.BytesIO()
+    gTTS(text=text, lang=lang).write_to_fp(buffer)
+    return buffer.getvalue()
+
+
+def transcribe_voice(audio_bytes, language, api_key):
+    """Voice message -> text with Groq Whisper. Uses the groq package or the REST API."""
+    prompt = ("Livestock farmer from Punjab, Pakistan asking about bhains, gaye, bakri, chara, wanda, "
+              "vaccine, mooh khur, gal ghotu, livestock card. مویشی، بھینس، گائے، بکری، ویکسین")
+    last_error = None
+    for model in WHISPER_MODELS:
+        try:
+            try:
+                from groq import Groq
+                client = Groq(api_key=api_key)
+                result = client.audio.transcriptions.create(
+                    file=("voice.wav", audio_bytes), model=model, language=language,
+                    prompt=prompt, response_format="json", temperature=0)
+                return (result.text or "").strip()
+            except ImportError:
+                import requests
+                response = requests.post(
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    files={"file": ("voice.wav", audio_bytes, "audio/wav")},
+                    data={"model": model, "language": language, "prompt": prompt,
+                          "response_format": "json", "temperature": "0"}, timeout=60)
+                response.raise_for_status()
+                return (response.json().get("text") or "").strip()
+        except Exception as error:
+            last_error = error
+    raise RuntimeError(f"Voice transcription failed: {last_error}")
+
+
+def whatsapp_link(question, answer):
+    from urllib.parse import quote
+    english, urdu = (answer.split("===URDU===", 1) + [""])[:2] if "===URDU===" in answer else (answer, "")
+    body = clean_for_speech(english)[:900]
+    if urdu:
+        body += "\n\n" + clean_for_speech(urdu)[:700]
+    text = (f"🐄 Punjab Livestock Rehnuma · پنجاب لائیو سٹاک رہنما\n\n❓ {question}\n\n{body}\n\n"
+            f"📞 Livestock Helpline: {HELPLINE}")
+    return "https://wa.me/?text=" + quote(text)
+
+
+# =====================================================================
+# SESSION STATE + INTERFACE LANGUAGE
+# =====================================================================
+defaults = {"messages": [], "ui_lang": "English", "big_text": False, "voice_round": 0, "audio": {}}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+UI = "ur" if st.session_state.ui_lang == "اردو" else "en"
+
+
+def t(key):
+    return UI_TEXT[UI][key]
+
 
 api_key = get_api_key()
 
@@ -597,7 +734,7 @@ api_key = get_api_key()
 import importlib.util
 PACKAGES = {"pypdf": "PDF reading (required)", "groq": "Groq SDK (backup: direct API call)",
             "fastembed": "Neural embeddings (backup: TF-IDF)", "faiss": "FAISS vector store (backup: NumPy)",
-            "tiktoken": "Token counting (backup: word count)"}
+            "tiktoken": "Token counting (backup: word count)", "gtts": "🔊 Listen option (Urdu/English voice)"}
 
 
 def is_installed(name):
@@ -609,37 +746,73 @@ def is_installed(name):
 
 installed = {name: is_installed(name) for name in PACKAGES}
 
+# Extra CSS: large text and Urdu interface
+extra_css = ""
+if st.session_state.big_text:
+    extra_css += """
+    [data-testid="stChatMessage"] p, [data-testid="stChatMessage"] li {font-size: 1.3rem !important; line-height: 1.7;}
+    .urdu, .urdu p, .urdu li {font-size: 1.45rem !important; line-height: 2.6 !important;}
+    .stButton button p, [data-testid="stChatInput"] textarea {font-size: 1.15rem !important;}
+    .chat-header .title {font-size: 1.4rem;}
+    """
+if UI == "ur":
+    extra_css += """
+    [data-testid="stWidgetLabel"], [data-testid="stPopoverBody"] label, .ui-ur {direction: rtl; text-align: right;
+      font-family: 'Noto Nastaliq Urdu', serif;}
+    [data-testid="stChatInput"] textarea {direction: rtl; text-align: right;}
+    """
+if extra_css:
+    st.markdown(f"<style>{extra_css}</style>", unsafe_allow_html=True)
+
 # =====================================================================
-# CHAT HEADER
+# CHAT HEADER (with logo)
 # =====================================================================
 st.markdown(f"""
 <div class="chat-header">
-  <div class="logo">🐄</div>
+  {logo_html(find_logo())}
   <div>
-    <div class="title">Punjab Livestock Rehnuma</div>
-    <div class="sub">پنجاب لائیو سٹاک رہنما · <span class="dot"></span>Online · L&amp;DD Punjab</div>
+    <div class="title">{"پنجاب لائیو سٹاک رہنما" if UI == "ur" else "Punjab Livestock Rehnuma"}</div>
+    <div class="sub">{"Punjab Livestock Rehnuma" if UI == "ur" else "پنجاب لائیو سٹاک رہنما"} ·
+      <span class="dot"></span>{t("online")} · 🇵🇰 L&amp;DD Punjab</div>
   </div>
   <a class="call" href="tel:{HELPLINE.replace('-', '')}">📞 {HELPLINE}</a>
 </div>
 """, unsafe_allow_html=True)
 
-col_settings, col_new, col_dl = st.columns([1.3, 1, 1])
+col_settings, col_lang, col_big, col_new, col_dl = st.columns(5)
+col_settings.markdown('<span class="toolbar"></span>', unsafe_allow_html=True)
 
-with col_settings.popover("⚙️ Settings", use_container_width=True):
-    level = st.radio("Technical level · تکنیکی سطح", list(TECH_LEVELS.keys()), index=0)
-    size = st.radio("Response size · جواب کی لمبائی", list(RESPONSE_SIZES.keys()), index=1, horizontal=True)
-    language = st.radio("Answer language · جواب کی زبان", ANSWER_LANGUAGES, index=0, horizontal=True)
-    model_label = st.selectbox("AI model (open-source, Groq)", list(ANSWER_MODELS.keys()))
-    show_src = st.toggle("Show sources", value=True)
+# One-tap switches for the two most used options
+if col_lang.button("اردو" if UI == "en" else "EN", use_container_width=True,
+                   help="اردو انٹرفیس · Urdu interface" if UI == "en" else "English interface"):
+    st.session_state.ui_lang = "اردو" if UI == "en" else "English"
+    st.rerun()
+if col_big.button("A+" if not st.session_state.big_text else "A-", use_container_width=True,
+                  help="Large text · بڑا لکھائی"):
+    st.session_state.big_text = not st.session_state.big_text
+    st.rerun()
+
+with col_settings.popover("⚙️", use_container_width=True, help=t("settings")):
+    st.caption(("زبان اور بڑا لکھائی: اوپر کے بٹن استعمال کریں") if UI == "ur"
+               else "Interface language and large text: use the اردو / A+ buttons above")
+    level = st.radio(t("level"), list(TECH_LEVELS.keys()), index=0,
+                     format_func=lambda x: TECH_LABELS_UR[x] if UI == "ur" else x)
+    size = st.radio(t("size"), list(RESPONSE_SIZES.keys()), index=1, horizontal=True,
+                    format_func=lambda x: SIZE_LABELS_UR[x] if UI == "ur" else x)
+    language = st.radio(t("answer_lang"), ANSWER_LANGUAGES, index=0, horizontal=True)
+    voice_lang = st.radio(t("voice_lang"), list(VOICE_LANGS.keys()), index=0, horizontal=True)
+    model_label = st.selectbox(t("model"), list(ANSWER_MODELS.keys()))
+    show_src = st.toggle(t("sources"), value=True)
     if not api_key:
         api_key = st.text_input("Groq API key", type="password", help="Free key: console.groq.com/keys")
-    with st.expander("🛠️ Admin"):
-        extra = st.file_uploader("Add extra PDF (this session only)", type=["pdf"],
+    with st.expander(t("admin")):
+        extra = st.file_uploader("Add extra PDF or Urdu .txt FAQ (this session only)", type=["pdf", "txt"],
                                  accept_multiple_files=True)
         status_box = st.container()
 
-if col_new.button("🗑️ New chat", use_container_width=True):
+if col_new.button("🗑️", use_container_width=True, help=t("new_chat")):
     st.session_state.messages = []
+    st.session_state.audio = {}
     st.rerun()
 
 settings = {"level": level, "size": size, "language": language, "model": ANSWER_MODELS[model_label]}
@@ -660,8 +833,8 @@ if not installed["pypdf"]:
                      "named exactly **requirements.txt** (with an **s**) next to app.py. Rename it, then on "
                      "Streamlit Cloud click **Manage app → Reboot app**.")
 elif not file_items:
-    setup_problem = ("No FAQ file found. Add your PDF (and Urdu_FAQ.txt) to the GitHub repo next to app.py, or upload one in "
-                     "**⚙️ Settings → Admin**.")
+    setup_problem = ("No FAQ file found. Add your PDF (and Urdu_FAQ.txt) to the GitHub repo next to app.py, "
+                     "or upload one in **⚙️ Settings → Admin**.")
 else:
     key = hashlib.md5(b"".join(hashlib.md5(d).digest() for _, d in file_items)).hexdigest()
     try:
@@ -685,6 +858,7 @@ with status_box:
         if s["pages_skipped"]:
             st.caption(f"ℹ️ {s['pages_skipped']} PDF page(s) skipped (unreadable Urdu font); "
                        "their content comes from Urdu_FAQ.txt instead.")
+    st.caption("🖼️ Logo: " + ("logo file found ✅" if find_logo() else "add logo.png to the repo to show it"))
     st.markdown("**🩺 System status**")
     for name, purpose in PACKAGES.items():
         st.markdown(f"{'✅' if installed[name] else '⚠️'} **{name}** - {purpose}")
@@ -696,7 +870,7 @@ if st.session_state.messages:
         rating = st.session_state.get(f"fb{i}")
         mark = {1: " [👍]", 0: " [👎]"}.get(rating, "")
         lines += [f"{who} ({m.get('time', '')}){mark}:", m["content"].replace("===URDU===", "\n--- اردو ---\n"), ""]
-    col_dl.download_button("📥 Save chat", "\n".join(lines), file_name="punjab_livestock_rehnuma_chat.txt",
+    col_dl.download_button("📥", "\n".join(lines), help=t("save"), file_name="punjab_livestock_rehnuma_chat.txt",
                            mime="text/plain", use_container_width=True)
 
 if setup_problem:
@@ -710,45 +884,81 @@ pending = None
 # Welcome message (always shown first)
 with st.chat_message("assistant", avatar="🐄"):
     st.markdown('<span class="b-msg"></span>', unsafe_allow_html=True)
-    st.markdown("**Assalam-o-Alaikum! 👋** I am **Punjab Livestock Rehnuma**, the assistant of the "
-                "Livestock & Dairy Development Department, Punjab. Ask me about animal diseases, vaccination, "
-                "breeding, feeding, the Livestock Card and department services, in English, اردو or Roman Urdu.")
-    st.markdown('<div class="urdu">السلام علیکم! میں پنجاب لائیو سٹاک رہنما ہوں۔ جانوروں کی بیماریوں، ویکسینیشن، '
-                'نسل کشی، خوراک، لائیو سٹاک کارڈ اور محکمے کی خدمات کے بارے میں سوال پوچھیں۔</div>',
-                unsafe_allow_html=True)
+    if UI == "ur":
+        st.markdown(f'<div class="urdu">{md_to_html(t("welcome"))}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(t("welcome"))
     if not st.session_state.messages:
-        st.markdown('<div class="lang-label">Tap a question · سوال منتخب کریں</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="lang-label">{t("tap")}</div>', unsafe_allow_html=True)
         cols = st.columns(2)
         for i, q in enumerate(SAMPLE_QUESTIONS):
             if cols[i % 2].button(q, key=f"sample{i}", use_container_width=True):
                 pending = q
 
+
+def answer_tools(i, m, question_text):
+    """Listen, WhatsApp share and feedback buttons under an answer."""
+    english, urdu = (m["content"].split("===URDU===", 1) + [""])[:2] \
+        if "===URDU===" in m["content"] else (m["content"], "")
+    if not urdu and is_mostly_urdu(english):
+        english, urdu = "", english
+    c1, c2, c3, c4 = st.columns([1, 1, 1.4, 1])
+    if urdu and c1.button("🔊 اردو", key=f"tts_ur{i}", help=t("listen")):
+        st.session_state.audio[i] = ("ur", clean_for_speech(urdu))
+    if english and c2.button("🔊 English", key=f"tts_en{i}", help=t("listen")):
+        st.session_state.audio[i] = ("en", clean_for_speech(english))
+    c3.link_button("🟢 " + t("whatsapp"), whatsapp_link(question_text, m["content"]), use_container_width=True)
+    with c4:
+        st.feedback("thumbs", key=f"fb{i}")
+    if i in st.session_state.audio:
+        lang, speech_text = st.session_state.audio[i]
+        try:
+            st.audio(text_to_speech(speech_text, lang), format="audio/mp3", autoplay=True)
+        except Exception:
+            st.caption("🔇 " + t("tts_fail"))
+
+
 # Chat history
 last = len(st.session_state.messages) - 1
 for i, m in enumerate(st.session_state.messages):
     if m["role"] == "user":
-        user_bubble(m["content"], m.get("time", ""))
+        user_bubble(("🎤 " if m.get("voice") else "") + m["content"], m.get("time", ""))
         continue
+    question_text = st.session_state.messages[i - 1]["content"] if i > 0 else ""
     with st.chat_message("assistant", avatar="🐄"):
         st.markdown('<span class="b-msg"></span>', unsafe_allow_html=True)
         show_answer(m["content"])
         if show_src:
             show_sources(m.get("sources", []), m.get("low", False))
-        c_time, c_fb = st.columns([3, 1])
-        c_time.markdown(f'<div class="msg-time">{m.get("time", "")}</div>', unsafe_allow_html=True)
-        with c_fb:
-            st.feedback("thumbs", key=f"fb{i}")
+        st.markdown(f'<div class="msg-time">{m.get("time", "")}</div>', unsafe_allow_html=True)
+        answer_tools(i, m, question_text)
         if i == last and m.get("next"):
-            st.markdown('<div class="lang-label">You can also ask · مزید پوچھیں</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="lang-label">{t("also")}</div>', unsafe_allow_html=True)
             for j, q in enumerate(m["next"]):
                 if st.button(q, key=f"next{i}_{j}"):
                     pending = q
 
-st.markdown(f'<div class="disclaimer">⚠️ General guidance only. For sick animals consult a veterinary doctor '
-            f'or call {HELPLINE} · بیمار جانور کے لیے ڈاکٹر سے رجوع کریں</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="disclaimer">⚠️ {t("disclaimer")} {HELPLINE}</div>', unsafe_allow_html=True)
 
-typed = st.chat_input("Type your question · اپنا سوال لکھیں")
-question = typed or pending
+# Voice message (a new recorder appears after each message, so old audio is not sent again)
+voice = st.audio_input(t("voice"), key=f"voice_{st.session_state.voice_round}")
+typed = st.chat_input(t("input"))
+question, from_voice = typed or pending, False
+
+if voice is not None and not question:
+    if not api_key:
+        st.error("Groq API key is missing. Add it in Streamlit secrets or ⚙️ Settings.")
+        st.stop()
+    with st.spinner(t("listening")):
+        try:
+            question = transcribe_voice(voice.getvalue(), VOICE_LANGS[voice_lang], api_key)
+            from_voice = True
+        except Exception as error:
+            st.error(f"{t('no_voice')} ({error})")
+    st.session_state.voice_round += 1
+    if not question:
+        st.warning(t("no_voice"))
+        st.stop()
 
 if question:
     if not api_key:
@@ -757,14 +967,13 @@ if question:
 
     history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
     asked_at = now_text()
-    user_bubble(question, asked_at)
+    user_bubble(("🎤 " if from_voice else "") + question, asked_at)
 
     with st.chat_message("assistant", avatar="🐄"):
         st.markdown('<span class="b-msg"></span>', unsafe_allow_html=True)
         typing = st.empty()
-        typing.markdown('<div class="typing"><span></span><span></span><span></span></div>'
-                        '<div class="msg-time">Rehnuma is typing… · رہنما لکھ رہا ہے</div>',
-                        unsafe_allow_html=True)
+        typing.markdown(f'<div class="typing"><span></span><span></span><span></span></div>'
+                        f'<div class="msg-time">{t("typing")}</div>', unsafe_allow_html=True)
         next_questions = []
         try:
             search_query, urdu_query = understand_question(question, history, api_key)
@@ -784,7 +993,8 @@ if question:
                       f"Please try again, or call the Livestock Helpline {HELPLINE}.")
         typing.empty()
 
-    st.session_state.messages.append({"role": "user", "content": question, "time": asked_at})
+    st.session_state.messages.append({"role": "user", "content": question, "time": asked_at,
+                                      "voice": from_voice})
     st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources,
                                       "low": low, "time": now_text(), "next": next_questions})
     st.rerun()
