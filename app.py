@@ -1,5 +1,5 @@
 """
-Livestock Helper - Bilingual (English / Urdu) RAG chatbot
+Punjab Livestock Rehnuma - Bilingual (English / Urdu) RAG chatbot
 Livestock & Dairy Development Department, Punjab
 
 How it works
@@ -26,7 +26,7 @@ from datetime import datetime
 import numpy as np
 import streamlit as st
 
-st.set_page_config(page_title="Livestock Helper | لائیو سٹاک مددگار",
+st.set_page_config(page_title="Punjab Livestock Rehnuma | پنجاب لائیو سٹاک رہنما",
                    page_icon="🐄", layout="wide")
 
 # =====================================================================
@@ -350,7 +350,7 @@ def build_system_prompt(level, size, language):
     else:
         lang_rule = "Write the answer in simple Urdu script only."
 
-    return f"""You are "Livestock Helper", the official-style assistant of the Livestock & Dairy
+    return f"""You are "Punjab Livestock Rehnuma", the official-style assistant of the Livestock & Dairy
 Development Department, Punjab, Pakistan. You help livestock farmers with animal health, diseases,
 vaccination, breeding and artificial insemination, feeding, dairy, poultry and department services
 (Livestock Card, helpline, veterinary hospitals, programmes).
@@ -443,7 +443,7 @@ def show_sources(sources, low_confidence):
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.markdown("## 🐄 Livestock Helper")
+    st.markdown("## 🐄 Punjab Livestock Rehnuma")
     st.markdown(f'<div class="helpline">📞 <b>Livestock Helpline</b><br>'
                 f'<span style="font-size:1.3rem">{HELPLINE}</span><br>24/7 · One Punjab, One Helpline</div>',
                 unsafe_allow_html=True)
@@ -532,7 +532,7 @@ with st.sidebar:
 # =====================================================================
 # MAIN PAGE
 # =====================================================================
-st.title("🐄 Livestock Helper · لائیو سٹاک مددگار")
+st.title("🐄 Punjab Livestock Rehnuma · پنجاب لائیو سٹاک رہنما")
 st.caption("Livestock & Dairy Development Department, Punjab · Ask in English, اردو or Roman Urdu")
 
 if not file_items:
@@ -600,9 +600,9 @@ if question:
 
 # Download conversation
 if st.session_state.messages:
-    lines = [f"Livestock Helper chat - {datetime.now():%d %b %Y %H:%M}", f"Helpline: {HELPLINE}", ""]
+    lines = [f"Punjab Livestock Rehnuma chat - {datetime.now():%d %b %Y %H:%M}", f"Helpline: {HELPLINE}", ""]
     for m in st.session_state.messages:
-        who = "Farmer" if m["role"] == "user" else "Livestock Helper"
+        who = "Farmer" if m["role"] == "user" else "Punjab Livestock Rehnuma"
         lines += [f"{who}:", m["content"].replace("===URDU===", "\n--- اردو ---\n"), ""]
     st.download_button("📥 Download this conversation", "\n".join(lines),
-                       file_name="livestock_helper_chat.txt", mime="text/plain")
+                       file_name="punjab_livestock_rehnuma_chat.txt", mime="text/plain")
