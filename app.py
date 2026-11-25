@@ -181,17 +181,27 @@ def load_tokenizer():
         return None                                    # word-based fallback
 
 
+def light_mode():
+    """LIGHT_MODE = true in Streamlit secrets switches off the neural model (uses ~200 MB less memory)."""
+    try:
+        value = st.secrets.get("LIGHT_MODE", False)
+    except Exception:
+        value = os.environ.get("LIGHT_MODE", False)
+    return str(value).strip().lower() in ("true", "1", "yes")
+
+
 class FastEmbedder:
-    """Neural embeddings (BAAI/bge-small-en-v1.5) via FastEmbed - best quality."""
+    """Neural multilingual embeddings via FastEmbed - best quality. Uses little memory:
+    2 CPU threads and small batches, so it stays inside Streamlit Cloud's free limits."""
     name = "FastEmbed multilingual MiniLM (English + Urdu)"
     min_relevance = MIN_RELEVANCE
 
     def __init__(self):
         from fastembed import TextEmbedding
-        self.model = TextEmbedding(model_name=EMBED_MODEL)
+        self.model = TextEmbedding(model_name=EMBED_MODEL, threads=2)
 
     def embed(self, texts):
-        return np.array(list(self.model.embed(list(texts))), dtype="float32")
+        return np.array(list(self.model.embed(list(texts), batch_size=16)), dtype="float32")
 
 
 class TfidfEmbedder:
@@ -229,6 +239,8 @@ class TfidfEmbedder:
 
 @st.cache_resource(show_spinner="Loading embedding model (first time only)...")
 def load_fastembed():
+    if light_mode():
+        return None                                   # light mode: TF-IDF only, very low memory
     try:
         return FastEmbedder()
     except Exception:
@@ -345,11 +357,15 @@ def build_knowledge_base(files_key, file_items):
     texts = [c["text"] for c in chunks]
     embedder = load_fastembed() or TfidfEmbedder().fit(texts)
     vectors = normalise(embedder.embed(texts))
-    index, store = make_index(vectors.shape[1])
+    dimension = int(vectors.shape[1])
+    index, store = make_index(dimension)
     index.add(vectors)
+    del vectors                                       # free memory: the index keeps its own copy
+    import gc
+    gc.collect()
     stats = {"files": len(file_items), "pages_total": total, "pages_used": len(pages), "store": store,
              "pages_skipped": skipped, "chunks": len(chunks),
-             "tokens": sum(c["tokens"] for c in chunks), "dimension": int(vectors.shape[1]),
+             "tokens": sum(c["tokens"] for c in chunks), "dimension": dimension,
              "embedder": embedder.name, "urdu_chunks": sum(c["lang"] == "ur" for c in chunks)}
     return {"index": index, "chunks": chunks, "stats": stats, "embedder": embedder}
 
