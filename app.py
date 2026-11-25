@@ -27,7 +27,7 @@ import numpy as np
 import streamlit as st
 
 st.set_page_config(page_title="Punjab Livestock Rehnuma | پنجاب لائیو سٹاک رہنما",
-                   page_icon="🐄", layout="wide")
+                   page_icon="🐄", layout="centered", initial_sidebar_state="collapsed")
 
 # =====================================================================
 # SETTINGS
@@ -82,11 +82,58 @@ SAMPLE_QUESTIONS = [
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;600&display=swap');
+
+/* hide Streamlit menu, footer and sidebar so it looks like a chat app */
+#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"] {display: none !important;}
+header[data-testid="stHeader"] {background: transparent; height: 0;}
+.block-container {padding-top: 0.8rem; padding-bottom: 6rem; max-width: 780px;}
+
+/* chat header */
+.chat-header {display: flex; align-items: center; gap: 0.8rem; padding: 0.7rem 1rem; margin-bottom: 0.6rem;
+  border-radius: 16px; background: linear-gradient(135deg, #0b6e4f, #13945f); color: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);}
+.chat-header .logo {font-size: 2rem; background: #fff; border-radius: 50%; width: 52px; height: 52px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;}
+.chat-header .title {font-weight: 700; font-size: 1.15rem; line-height: 1.2;}
+.chat-header .sub {font-size: 0.8rem; opacity: 0.9;}
+.chat-header .dot {display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #7CFC9A; margin-right: 4px;}
+.chat-header a.call {margin-left: auto; color: #fff !important; text-decoration: none; background: rgba(255,255,255,0.2);
+  padding: 0.4rem 0.8rem; border-radius: 20px; font-size: 0.85rem; white-space: nowrap;}
+
+/* chat bubbles */
+[data-testid="stChatMessage"] {border-radius: 18px; padding: 0.7rem 0.9rem 1rem 0.9rem;
+  margin-bottom: 0.5rem; overflow: visible;}
+[data-testid="stChatMessage"]:has(.u-msg) {flex-direction: row-reverse; background: rgba(37,211,102,0.16);
+  width: fit-content; max-width: 82%; min-width: 35%; margin-left: auto; border-bottom-right-radius: 4px;}
+[data-testid="stChatMessage"]:has(.u-msg) [data-testid="stChatMessageContent"] {text-align: right;}
+/* hide the invisible marker used to tell user and bot bubbles apart */
+[data-testid="stChatMessageContent"] [data-testid="stElementContainer"]:has(.u-msg),
+[data-testid="stChatMessageContent"] [data-testid="stElementContainer"]:has(.b-msg) {display: none;}
+[data-testid="stChatMessage"]:has(.b-msg) {background: rgba(128,128,128,0.08);
+  border: 1px solid rgba(128,128,128,0.15); margin-right: 6%; border-bottom-left-radius: 4px;}
+.msg-time {font-size: 0.7rem; opacity: 0.55; margin-top: 0.2rem;}
+
+/* Urdu text */
 .urdu {direction: rtl; text-align: right; font-family: 'Noto Nastaliq Urdu', 'Jameel Noori Nastaleeq', serif;
        line-height: 2.3; font-size: 1.05rem;}
 .urdu ul, .urdu ol {padding-right: 1.5rem; padding-left: 0;}
-.lang-label {font-weight: 600; opacity: 0.75; margin: 0.4rem 0 0.2rem 0;}
-.helpline {padding: 0.6rem; border-radius: 0.5rem; background: rgba(34,139,34,0.12); text-align: center;}
+.lang-label {font-size: 0.75rem; font-weight: 600; opacity: 0.6; margin: 0.3rem 0 0.1rem 0;}
+.lang-sep {border-top: 1px dashed rgba(128,128,128,0.35); margin: 0.6rem 0;}
+
+/* quick-reply chips */
+[data-testid="stChatMessage"] div[data-testid="stButton"] button {border-radius: 20px; font-size: 0.85rem;
+  padding: 0.2rem 0.9rem; border-color: #13945f; text-align: left;}
+[data-testid="stChatMessage"] div[data-testid="stButton"] button p {white-space: normal; overflow: visible;
+  text-overflow: clip; line-height: 1.35;}
+
+/* typing animation */
+.typing span {display: inline-block; width: 8px; height: 8px; margin: 0 2px; border-radius: 50%;
+  background: #13945f; animation: blink 1.4s infinite both;}
+.typing span:nth-child(2) {animation-delay: 0.2s;} .typing span:nth-child(3) {animation-delay: 0.4s;}
+@keyframes blink {0%, 80%, 100% {opacity: 0.2;} 40% {opacity: 1;}}
+.disclaimer {font-size: 0.72rem; opacity: 0.6; text-align: center; margin-top: 0.4rem;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -373,7 +420,10 @@ STYLE
 - Length: {RESPONSE_SIZES[size]}
 - {lang_rule}
 - Use bullet points or numbered steps where useful. Be respectful and encouraging.
-- Do not add a sources list; the app shows sources separately."""
+- Do not add a sources list; the app shows sources separately.
+- At the very end, add a line containing only ===NEXT=== followed by 3 short follow-up questions the
+  farmer might ask next (one per line, no numbering, max 10 words each, in the same language and
+  script as the farmer's question)."""
 
 
 def answer_question(question, search_query, chunks, history, settings, api_key):
@@ -416,14 +466,33 @@ def md_to_html(text):
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", html_text)
 
 
+def is_mostly_urdu(text):
+    urdu = len(re.findall(r"[؀-ۿ]", text))
+    latin = len(re.findall(r"[A-Za-z]", text))
+    return urdu > 0 and urdu > latin
+
+
+def split_answer(raw):
+    """Separate the answer from the suggested follow-up questions."""
+    answer, next_questions = raw, []
+    if "===NEXT===" in raw:
+        answer, tail = raw.split("===NEXT===", 1)
+        for line in tail.strip().split("\n"):
+            q = re.sub(r"^([-*•]|\d+[.)])\s*", "", line.strip()).strip()
+            if 3 < len(q) < 120:
+                next_questions.append(q)
+    return answer.strip(), next_questions[:3]
+
+
 def show_answer(text):
     if "===URDU===" in text:
         english, urdu = text.split("===URDU===", 1)
-        st.markdown('<div class="lang-label">🇬🇧 English</div>', unsafe_allow_html=True)
+        st.markdown('<div class="lang-label">ENGLISH</div>', unsafe_allow_html=True)
         st.markdown(english.strip())
-        st.markdown('<div class="lang-label" style="text-align:right">اردو 🇵🇰</div>', unsafe_allow_html=True)
+        st.markdown('<div class="lang-sep"></div><div class="lang-label" style="text-align:right">اردو</div>',
+                    unsafe_allow_html=True)
         st.markdown(f'<div class="urdu">{md_to_html(urdu)}</div>', unsafe_allow_html=True)
-    elif re.search(r"[؀-ۿ]", text) and len(re.findall(r"[A-Za-z]", text)) < len(text) * 0.2:
+    elif is_mostly_urdu(text):
         st.markdown(f'<div class="urdu">{md_to_html(text)}</div>', unsafe_allow_html=True)
     else:
         st.markdown(text)
@@ -432,54 +501,34 @@ def show_answer(text):
 def show_sources(sources, low_confidence):
     if not sources:
         return
-    label = "📎 Sources from department FAQs" + (" (low match - general advice)" if low_confidence else "")
+    label = "📎 Sources" + (" · general advice (low match)" if low_confidence else "")
     with st.expander(label):
         for s in sources:
             st.markdown(f"**{s['source']} - page {s['page']}** · relevance {s['score']:.2f}")
-            st.caption(s["text"][:450] + "...")
+            st.caption(s["text"][:400] + "...")
+
+
+def user_bubble(text, time_text):
+    with st.chat_message("user", avatar="👨‍🌾"):
+        st.markdown('<span class="u-msg"></span>', unsafe_allow_html=True)
+        if is_mostly_urdu(text):
+            st.markdown(f'<div class="urdu">{md_to_html(text)}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(text)
+        st.markdown(f'<div class="msg-time">{time_text} ✓✓</div>', unsafe_allow_html=True)
+
+
+def now_text():
+    return datetime.now().strftime("%I:%M %p")
 
 
 # =====================================================================
-# SIDEBAR
+# SETTINGS (stored in session so the ⚙️ popover can change them)
 # =====================================================================
-with st.sidebar:
-    st.markdown("## 🐄 Punjab Livestock Rehnuma")
-    st.markdown(f'<div class="helpline">📞 <b>Livestock Helpline</b><br>'
-                f'<span style="font-size:1.3rem">{HELPLINE}</span><br>24/7 · One Punjab, One Helpline</div>',
-                unsafe_allow_html=True)
-    st.divider()
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-    st.subheader("⚙️ Answer settings")
-    level = st.radio("Technical level", list(TECH_LEVELS.keys()), index=0)
-    size = st.select_slider("Response size", list(RESPONSE_SIZES.keys()), value="Medium")
-    language = st.radio("Answer language", ANSWER_LANGUAGES, index=0)
-    model_label = st.selectbox("AI model (open-source, Groq)", list(ANSWER_MODELS.keys()))
-    show_src = st.toggle("Show sources", value=True)
-
-    api_key = get_api_key()
-    if not api_key:
-        api_key = st.text_input("Groq API key", type="password", help="Free key: console.groq.com/keys")
-
-    st.divider()
-    if st.button("🗑️ New chat", use_container_width=True):
-        st.session_state.messages = []
-        st.rerun()
-
-    with st.expander("🛠️ Admin: knowledge base"):
-        extra = st.file_uploader("Add extra PDF (this session only)", type=["pdf"],
-                                 accept_multiple_files=True)
-
-settings = {"level": level, "size": size, "language": language, "model": ANSWER_MODELS[model_label]}
-
-# =====================================================================
-# LOAD KNOWLEDGE BASE
-# =====================================================================
-file_items = []
-for path in find_repo_pdfs():
-    with open(path, "rb") as f:
-        file_items.append((os.path.basename(path), f.read()))
-for up in extra or []:
-    file_items.append((up.name, up.getvalue()))
+api_key = get_api_key()
 
 # Which packages are installed? (every one except pypdf has a built-in backup)
 import importlib.util
@@ -497,112 +546,178 @@ def is_installed(name):
 
 installed = {name: is_installed(name) for name in PACKAGES}
 
-kb = None
+# =====================================================================
+# CHAT HEADER
+# =====================================================================
+st.markdown(f"""
+<div class="chat-header">
+  <div class="logo">🐄</div>
+  <div>
+    <div class="title">Punjab Livestock Rehnuma</div>
+    <div class="sub">پنجاب لائیو سٹاک رہنما · <span class="dot"></span>Online · L&amp;DD Punjab</div>
+  </div>
+  <a class="call" href="tel:{HELPLINE.replace('-', '')}">📞 {HELPLINE}</a>
+</div>
+""", unsafe_allow_html=True)
+
+col_settings, col_new, col_dl = st.columns([1.3, 1, 1])
+
+with col_settings.popover("⚙️ Settings", use_container_width=True):
+    level = st.radio("Technical level · تکنیکی سطح", list(TECH_LEVELS.keys()), index=0)
+    size = st.radio("Response size · جواب کی لمبائی", list(RESPONSE_SIZES.keys()), index=1, horizontal=True)
+    language = st.radio("Answer language · جواب کی زبان", ANSWER_LANGUAGES, index=0, horizontal=True)
+    model_label = st.selectbox("AI model (open-source, Groq)", list(ANSWER_MODELS.keys()))
+    show_src = st.toggle("Show sources", value=True)
+    if not api_key:
+        api_key = st.text_input("Groq API key", type="password", help="Free key: console.groq.com/keys")
+    with st.expander("🛠️ Admin"):
+        extra = st.file_uploader("Add extra PDF (this session only)", type=["pdf"],
+                                 accept_multiple_files=True)
+        status_box = st.container()
+
+if col_new.button("🗑️ New chat", use_container_width=True):
+    st.session_state.messages = []
+    st.rerun()
+
+settings = {"level": level, "size": size, "language": language, "model": ANSWER_MODELS[model_label]}
+
+# =====================================================================
+# LOAD KNOWLEDGE BASE
+# =====================================================================
+file_items = []
+for path in find_repo_pdfs():
+    with open(path, "rb") as f:
+        file_items.append((os.path.basename(path), f.read()))
+for up in extra or []:
+    file_items.append((up.name, up.getvalue()))
+
+kb, setup_problem = None, ""
 if not installed["pypdf"]:
-    st.error("⚙️ Setup problem: the Python packages were not installed. In GitHub, the file must be "
-             "named exactly **requirements.txt** (with an **s**) and be in the main folder next to app.py. "
-             "Rename it, then on Streamlit Cloud click **Manage app → Reboot app**.")
-elif file_items:
+    setup_problem = ("⚙️ Setup problem: the Python packages were not installed. In GitHub the file must be "
+                     "named exactly **requirements.txt** (with an **s**) next to app.py. Rename it, then on "
+                     "Streamlit Cloud click **Manage app → Reboot app**.")
+elif not file_items:
+    setup_problem = ("No FAQ PDF found. Add your PDF to the GitHub repo next to app.py, or upload one in "
+                     "**⚙️ Settings → Admin**.")
+else:
     key = hashlib.md5(b"".join(hashlib.md5(d).digest() for _, d in file_items)).hexdigest()
     try:
         kb = build_knowledge_base(key, tuple(file_items))
+        if kb is None:
+            setup_problem = "The PDF has no readable text."
     except ModuleNotFoundError as error:
-        st.error(f"Missing package: {error.name}. Make sure the file is named exactly "
-                 "'requirements.txt' (with an s), is in the main folder next to app.py, "
-                 "then reboot the app (Manage app → Reboot).")
+        setup_problem = (f"Missing package: {error.name}. Name the file exactly 'requirements.txt' (with an s), "
+                         "next to app.py, then reboot the app.")
     except Exception as error:
-        st.error(f"Could not build the knowledge base: {error}")
+        setup_problem = f"Could not build the knowledge base: {error}"
 
-with st.sidebar:
+with status_box:
     if kb:
         s = kb["stats"]
         st.caption(f"📚 {s['files']} file(s) · {s['pages_used']}/{s['pages_total']} pages used · "
                    f"{s['chunks']} chunks · {s['tokens']:,} tokens · vector size {s['dimension']} · "
                    f"store: {s['store']} · embeddings: {s['embedder']}")
         if s["pages_skipped"]:
-            st.caption(f"⚠️ {s['pages_skipped']} page(s) skipped: text could not be read correctly "
-                       "(usually Urdu fonts). Answers in Urdu are still provided by translation.")
-    with st.expander("🩺 System status"):
-        for name, purpose in PACKAGES.items():
-            st.markdown(f"{'✅' if installed[name] else '⚠️'} **{name}** - {purpose}")
-        if not all(installed.values()):
-            st.caption("⚠️ = not installed, backup in use. Check that the file is named requirements.txt.")
-    st.caption("⚠️ This assistant gives general guidance. For sick animals, always consult a veterinary doctor.")
+            st.caption(f"⚠️ {s['pages_skipped']} page(s) skipped (unreadable Urdu font). "
+                       "Urdu answers are still given by translation.")
+    st.markdown("**🩺 System status**")
+    for name, purpose in PACKAGES.items():
+        st.markdown(f"{'✅' if installed[name] else '⚠️'} **{name}** - {purpose}")
+
+if st.session_state.messages:
+    lines = [f"Punjab Livestock Rehnuma chat - {datetime.now():%d %b %Y %H:%M}", f"Helpline: {HELPLINE}", ""]
+    for i, m in enumerate(st.session_state.messages):
+        who = "Farmer" if m["role"] == "user" else "Punjab Livestock Rehnuma"
+        rating = st.session_state.get(f"fb{i}")
+        mark = {1: " [👍]", 0: " [👎]"}.get(rating, "")
+        lines += [f"{who} ({m.get('time', '')}){mark}:", m["content"].replace("===URDU===", "\n--- اردو ---\n"), ""]
+    col_dl.download_button("📥 Save chat", "\n".join(lines), file_name="punjab_livestock_rehnuma_chat.txt",
+                           mime="text/plain", use_container_width=True)
+
+if setup_problem:
+    st.error(setup_problem)
 
 # =====================================================================
-# MAIN PAGE
+# CHAT
 # =====================================================================
-st.title("🐄 Punjab Livestock Rehnuma · پنجاب لائیو سٹاک رہنما")
-st.caption("Livestock & Dairy Development Department, Punjab · Ask in English, اردو or Roman Urdu")
-
-if not file_items:
-    st.warning("No FAQ PDF found. Add your PDF to the GitHub repo (next to app.py) or upload it in "
-               "the sidebar under **Admin: knowledge base**.")
-elif kb is None:
-    st.warning("The PDF has no readable text.")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# Sample questions on an empty chat
 pending = None
-if not st.session_state.messages:
-    st.markdown("#### 💬 Try a question · سوال پوچھیں")
-    cols = st.columns(3)
-    for i, q in enumerate(SAMPLE_QUESTIONS):
-        if cols[i % 3].button(q, key=f"sample{i}", use_container_width=True):
-            pending = q
+
+# Welcome message (always shown first)
+with st.chat_message("assistant", avatar="🐄"):
+    st.markdown('<span class="b-msg"></span>', unsafe_allow_html=True)
+    st.markdown("**Assalam-o-Alaikum! 👋** I am **Punjab Livestock Rehnuma**, the assistant of the "
+                "Livestock & Dairy Development Department, Punjab. Ask me about animal diseases, vaccination, "
+                "breeding, feeding, the Livestock Card and department services, in English, اردو or Roman Urdu.")
+    st.markdown('<div class="urdu">السلام علیکم! میں پنجاب لائیو سٹاک رہنما ہوں۔ جانوروں کی بیماریوں، ویکسینیشن، '
+                'نسل کشی، خوراک، لائیو سٹاک کارڈ اور محکمے کی خدمات کے بارے میں سوال پوچھیں۔</div>',
+                unsafe_allow_html=True)
+    if not st.session_state.messages:
+        st.markdown('<div class="lang-label">Tap a question · سوال منتخب کریں</div>', unsafe_allow_html=True)
+        cols = st.columns(2)
+        for i, q in enumerate(SAMPLE_QUESTIONS):
+            if cols[i % 2].button(q, key=f"sample{i}", use_container_width=True):
+                pending = q
 
 # Chat history
-for m in st.session_state.messages:
-    with st.chat_message(m["role"], avatar="👨‍🌾" if m["role"] == "user" else "🐄"):
-        if m["role"] == "assistant":
-            show_answer(m["content"])
-            if show_src:
-                show_sources(m.get("sources", []), m.get("low", False))
-        else:
-            st.markdown(m["content"])
+last = len(st.session_state.messages) - 1
+for i, m in enumerate(st.session_state.messages):
+    if m["role"] == "user":
+        user_bubble(m["content"], m.get("time", ""))
+        continue
+    with st.chat_message("assistant", avatar="🐄"):
+        st.markdown('<span class="b-msg"></span>', unsafe_allow_html=True)
+        show_answer(m["content"])
+        if show_src:
+            show_sources(m.get("sources", []), m.get("low", False))
+        c_time, c_fb = st.columns([3, 1])
+        c_time.markdown(f'<div class="msg-time">{m.get("time", "")}</div>', unsafe_allow_html=True)
+        with c_fb:
+            st.feedback("thumbs", key=f"fb{i}")
+        if i == last and m.get("next"):
+            st.markdown('<div class="lang-label">You can also ask · مزید پوچھیں</div>', unsafe_allow_html=True)
+            for j, q in enumerate(m["next"]):
+                if st.button(q, key=f"next{i}_{j}"):
+                    pending = q
+
+st.markdown(f'<div class="disclaimer">⚠️ General guidance only. For sick animals consult a veterinary doctor '
+            f'or call {HELPLINE} · بیمار جانور کے لیے ڈاکٹر سے رجوع کریں</div>', unsafe_allow_html=True)
 
 typed = st.chat_input("Type your question · اپنا سوال لکھیں")
 question = typed or pending
 
 if question:
     if not api_key:
-        st.error("Groq API key is missing. Add it in Streamlit secrets or the sidebar.")
+        st.error("Groq API key is missing. Add it in Streamlit secrets or ⚙️ Settings.")
         st.stop()
 
     history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
-    st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user", avatar="👨‍🌾"):
-        st.markdown(question)
+    asked_at = now_text()
+    user_bubble(question, asked_at)
 
     with st.chat_message("assistant", avatar="🐄"):
-        with st.spinner("Searching department FAQs... · معلومات تلاش کی جا رہی ہیں"):
-            try:
-                search_query, _lang = understand_question(question, history, api_key)
-                sources = retrieve(search_query, kb) if kb else []
-                cutoff = kb["embedder"].min_relevance if kb else MIN_RELEVANCE
-                low = (not sources) or sources[0]["score"] < cutoff
-                relevant = [s for s in sources if s["score"] >= cutoff * 0.8]
-                answer = answer_question(question, search_query, relevant, history, settings, api_key)
-                if not answer.strip():
-                    answer = f"Sorry, no answer was generated. Please try again or call {HELPLINE}."
-            except Exception as error:
-                sources, low = [], True
-                answer = (f"⚠️ The service is busy or unavailable ({error}). "
-                          f"Please try again, or call the Livestock Helpline {HELPLINE}.")
-        show_answer(answer)
-        if show_src:
-            show_sources(sources, low)
+        st.markdown('<span class="b-msg"></span>', unsafe_allow_html=True)
+        typing = st.empty()
+        typing.markdown('<div class="typing"><span></span><span></span><span></span></div>'
+                        '<div class="msg-time">Rehnuma is typing… · رہنما لکھ رہا ہے</div>',
+                        unsafe_allow_html=True)
+        next_questions = []
+        try:
+            search_query, _lang = understand_question(question, history, api_key)
+            sources = retrieve(search_query, kb) if kb else []
+            cutoff = kb["embedder"].min_relevance if kb else MIN_RELEVANCE
+            low = (not sources) or sources[0]["score"] < cutoff
+            relevant = [s for s in sources if s["score"] >= cutoff * 0.8]
+            raw = answer_question(question, search_query, relevant, history, settings, api_key)
+            answer, next_questions = split_answer(raw)
+            if not answer:
+                answer = f"Sorry, no answer was generated. Please try again or call {HELPLINE}."
+        except Exception as error:
+            sources, low = [], True
+            answer = (f"⚠️ The service is busy or unavailable ({error}). "
+                      f"Please try again, or call the Livestock Helpline {HELPLINE}.")
+        typing.empty()
 
-    st.session_state.messages.append({"role": "assistant", "content": answer,
-                                      "sources": sources, "low": low})
-
-# Download conversation
-if st.session_state.messages:
-    lines = [f"Punjab Livestock Rehnuma chat - {datetime.now():%d %b %Y %H:%M}", f"Helpline: {HELPLINE}", ""]
-    for m in st.session_state.messages:
-        who = "Farmer" if m["role"] == "user" else "Punjab Livestock Rehnuma"
-        lines += [f"{who}:", m["content"].replace("===URDU===", "\n--- اردو ---\n"), ""]
-    st.download_button("📥 Download this conversation", "\n".join(lines),
-                       file_name="punjab_livestock_rehnuma_chat.txt", mime="text/plain")
+    st.session_state.messages.append({"role": "user", "content": question, "time": asked_at})
+    st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources,
+                                      "low": low, "time": now_text(), "next": next_questions})
+    st.rerun()
