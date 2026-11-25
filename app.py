@@ -5,7 +5,7 @@ Livestock & Dairy Development Department, Punjab
 How it works
 1. Loads the FAQ PDF(s) placed in the GitHub repo (same folder as app.py, or a data/ folder)
 2. Extracts text page by page, skips unreadable pages
-3. Splits text into token chunks (tiktoken)
+3. Splits PDF text into token chunks (tiktoken); each FAQ in Urdu_FAQ.txt is one chunk
 4. Creates embeddings (FastEmbed; TF-IDF backup) and stores them in FAISS (NumPy backup)
    Only streamlit + pypdf are strictly needed; every other package has a built-in backup.
 5. Translates the farmer's question (English / Urdu / Roman Urdu) into an English search query (Groq)
@@ -37,11 +37,11 @@ ANSWER_MODELS = {
     "GPT-OSS 20B (faster)": "openai/gpt-oss-20b",
 }
 QUERY_MODEL = "openai/gpt-oss-20b"          # fast model for translating the question
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"      # free open-source embedding model
-CHUNK_TOKENS = 350
-CHUNK_OVERLAP = 60
+EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"  # free, understands English + Urdu
+CHUNK_TOKENS = 150                          # the embedding model reads ~128 tokens
+CHUNK_OVERLAP = 30
 TOP_K = 5
-MIN_RELEVANCE = 0.55                        # below this the documents probably lack the answer
+MIN_RELEVANCE = 0.45                        # below this the documents probably lack the answer
 HELPLINE = "0800-09211"
 WEBSITE = "https://livestock.punjab.gov.pk"
 
@@ -149,10 +149,14 @@ def get_api_key():
     return key or os.environ.get("GROQ_API_KEY", "")
 
 
-def find_repo_pdfs():
+def find_repo_files():
+    """FAQ files in the repo: PDFs and UTF-8 text files (e.g. Urdu_FAQ.txt). requirements.txt is ignored."""
     folder = os.path.dirname(os.path.abspath(__file__))
-    files = glob.glob(os.path.join(folder, "*.pdf")) + glob.glob(os.path.join(folder, "data", "*.pdf"))
-    return sorted(set(files))
+    files = []
+    for sub in ("", "data"):
+        for pattern in ("*.pdf", "*.txt"):
+            files += glob.glob(os.path.join(folder, sub, pattern))
+    return sorted(f for f in set(files) if not os.path.basename(f).lower().startswith("requirements"))
 
 
 def is_garbled(text):
@@ -179,7 +183,7 @@ def load_tokenizer():
 
 class FastEmbedder:
     """Neural embeddings (BAAI/bge-small-en-v1.5) via FastEmbed - best quality."""
-    name = "FastEmbed bge-small-en-v1.5"
+    name = "FastEmbed multilingual MiniLM (English + Urdu)"
     min_relevance = MIN_RELEVANCE
 
     def __init__(self):
@@ -199,7 +203,7 @@ class TfidfEmbedder:
                "how can do does i my me we our you your which who when where will should".split())
 
     def _terms(self, text):
-        words = [w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in self.STOP and len(w) > 1]
+        words = [w for w in re.findall(r"[a-z0-9]+|[\u0600-\u06FF]+", text.lower()) if w not in self.STOP and len(w) > 1]
         return words + [a + "_" + b for a, b in zip(words, words[1:])]
 
     def fit(self, texts):
@@ -301,18 +305,43 @@ def make_index(dim):
         return NumpyIndex(dim), "NumPy (backup)"
 
 
+def is_urdu(text):
+    urdu = len(re.findall(r"[\u0600-\u06FF]", text))
+    return urdu > len(re.findall(r"[A-Za-z]", text))
+
+
+def read_text_faq(name, data):
+    """Each block separated by a blank line becomes one chunk. Lines starting with # are notes."""
+    text = data.decode("utf-8", errors="ignore")
+    chunks = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = [l.strip() for l in block.strip().split("\n") if l.strip() and not l.strip().startswith("#")]
+        if not lines:
+            continue
+        page_match = re.search(r"\(PDF page (\d+)\)", block)
+        body = " ".join(l for l in lines if not re.fullmatch(r"\(PDF page \d+\)", l))
+        chunks.append({"source": name, "page": int(page_match.group(1)) if page_match else "-",
+                       "text": body, "tokens": int(len(body.split()) * 1.3)})
+    return chunks
+
+
 @st.cache_resource(show_spinner="📚 Building the knowledge base (first visit only)...")
 def build_knowledge_base(files_key, file_items):
     """file_items: tuple of (name, bytes). files_key makes the cache rebuild when files change."""
-    pages, skipped, total = [], 0, 0
+    pages, text_chunks, skipped, total = [], [], 0, 0
     for name, data in file_items:
+        if name.lower().endswith(".txt"):
+            text_chunks.extend(read_text_faq(name, data))
+            continue
         good, bad, count = extract_pages(name, data)
         pages.extend(good)
         skipped += bad
         total += count
-    if not pages:
+    chunks = make_chunks(pages) + text_chunks
+    if not chunks:
         return None
-    chunks = make_chunks(pages)
+    for c in chunks:
+        c["lang"] = "ur" if is_urdu(c["text"]) else "en"
     texts = [c["text"] for c in chunks]
     embedder = load_fastembed() or TfidfEmbedder().fit(texts)
     vectors = normalise(embedder.embed(texts))
@@ -321,14 +350,25 @@ def build_knowledge_base(files_key, file_items):
     stats = {"files": len(file_items), "pages_total": total, "pages_used": len(pages), "store": store,
              "pages_skipped": skipped, "chunks": len(chunks),
              "tokens": sum(c["tokens"] for c in chunks), "dimension": int(vectors.shape[1]),
-             "embedder": embedder.name}
+             "embedder": embedder.name, "urdu_chunks": sum(c["lang"] == "ur" for c in chunks)}
     return {"index": index, "chunks": chunks, "stats": stats, "embedder": embedder}
 
 
-def retrieve(query, kb, top_k=TOP_K):
-    query_vector = normalise(kb["embedder"].embed([query]))
-    scores, ids = kb["index"].search(query_vector, min(top_k, len(kb["chunks"])))
-    return [{**kb["chunks"][i], "score": float(s)} for s, i in zip(scores[0], ids[0]) if i != -1]
+def retrieve(queries, kb, top_k=TOP_K):
+    """Search with every query (original, English, Urdu) and keep the best score for each chunk."""
+    queries = [q for q in dict.fromkeys(queries) if q and q.strip()]
+    vectors = normalise(kb["embedder"].embed(queries))
+    k = min(top_k, len(kb["chunks"]))
+    best = {}
+    for row_scores, row_ids in zip(*kb["index"].search(vectors, k)):
+        for score, i in zip(row_scores, row_ids):
+            if i != -1 and float(score) > best.get(int(i), -1):
+                best[int(i)] = float(score)
+    ranked = sorted(best.items(), key=lambda x: -x[1])
+    english = [i for i, _ in ranked if kb["chunks"][i]["lang"] == "en"][:4]
+    urdu = [i for i, _ in ranked if kb["chunks"][i]["lang"] == "ur"][:4]
+    chosen = sorted(set(english + urdu), key=lambda i: -best[i])
+    return [{**kb["chunks"][i], "score": best[i]} for i in chosen]
 
 
 # =====================================================================
@@ -371,7 +411,8 @@ Return ONLY JSON: {"language": "english" | "urdu" | "roman_urdu" | "mixed",
 "search_query": "the question rewritten as a clear English search query, using livestock terms
 (e.g. 'mooh khur' -> foot and mouth disease, 'gal ghotu' -> haemorrhagic septicaemia,
 'bhains' -> buffalo, 'wanda' -> concentrate feed), including context from the chat history if the
-question is a follow-up"}"""
+question is a follow-up",
+"urdu_query": "the same question written in proper Urdu script (اردو)"}"""
 
 
 def understand_question(question, history, api_key):
@@ -382,9 +423,9 @@ def understand_question(question, history, api_key):
             {"role": "user", "content": f"CHAT HISTORY:\n{recent}\n\nQUESTION: {question}"},
         ], temperature=0, json_mode=True)
         data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
-        return data.get("search_query") or question, data.get("language", "unknown")
+        return data.get("search_query") or question, data.get("urdu_query") or ""
     except Exception:
-        return question, "unknown"
+        return question, ""
 
 
 def build_system_prompt(level, size, language):
@@ -405,6 +446,11 @@ vaccination, breeding and artificial insemination, feeding, dairy, poultry and d
 KNOWLEDGE RULES
 - Use the CONTEXT from the department's FAQ documents as your main source. Prefer its facts, fees,
   procedures, eligibility and contact details.
+- The CONTEXT has [ENGLISH FAQ] and [URDU FAQ] parts. Write the English answer from the English FAQ.
+  Write the Urdu answer DIRECTLY from the Urdu FAQ: keep its wording, terms and sentence style as far
+  as possible instead of translating from English. The Urdu FAQ text was read by OCR, so silently fix
+  obvious spelling mistakes (e.g. "کرذ" -> "کرنے", "کے لے" -> "کے لیے", "سکت ہیں" -> "سکتے ہیں").
+  Only translate into Urdu when no Urdu FAQ covers that point.
 - If the context does not contain the answer, you may give general good-practice advice suited to
   Punjab conditions (hot summers, floods, buffalo and cattle based small farms, fodder shortage in
   May-June and Nov-Dec, common diseases such as FMD, HS, LSD, PPR, mastitis, ticks), but clearly say
@@ -427,8 +473,9 @@ STYLE
 
 
 def answer_question(question, search_query, chunks, history, settings, api_key):
-    context = "\n\n".join(f"[{c['source']} - page {c['page']}]\n{c['text']}" for c in chunks) \
-        or "No relevant document context found."
+    context = "\n\n".join(
+        f"[{'URDU FAQ' if c.get('lang') == 'ur' else 'ENGLISH FAQ'} - {c['source']}, page {c['page']}]\n{c['text']}"
+        for c in chunks) or "No relevant document context found."
     messages = [{"role": "system",
                  "content": build_system_prompt(settings["level"], settings["size"], settings["language"])}]
     for m in history[-4:]:
@@ -585,7 +632,7 @@ settings = {"level": level, "size": size, "language": language, "model": ANSWER_
 # LOAD KNOWLEDGE BASE
 # =====================================================================
 file_items = []
-for path in find_repo_pdfs():
+for path in find_repo_files():
     with open(path, "rb") as f:
         file_items.append((os.path.basename(path), f.read()))
 for up in extra or []:
@@ -597,7 +644,7 @@ if not installed["pypdf"]:
                      "named exactly **requirements.txt** (with an **s**) next to app.py. Rename it, then on "
                      "Streamlit Cloud click **Manage app → Reboot app**.")
 elif not file_items:
-    setup_problem = ("No FAQ PDF found. Add your PDF to the GitHub repo next to app.py, or upload one in "
+    setup_problem = ("No FAQ file found. Add your PDF (and Urdu_FAQ.txt) to the GitHub repo next to app.py, or upload one in "
                      "**⚙️ Settings → Admin**.")
 else:
     key = hashlib.md5(b"".join(hashlib.md5(d).digest() for _, d in file_items)).hexdigest()
@@ -617,9 +664,11 @@ with status_box:
         st.caption(f"📚 {s['files']} file(s) · {s['pages_used']}/{s['pages_total']} pages used · "
                    f"{s['chunks']} chunks · {s['tokens']:,} tokens · vector size {s['dimension']} · "
                    f"store: {s['store']} · embeddings: {s['embedder']}")
+        st.caption(f"🇵🇰 Urdu FAQ chunks: {s['urdu_chunks']}" +
+                   ("" if s["urdu_chunks"] else " - add Urdu_FAQ.txt to the repo for direct Urdu answers"))
         if s["pages_skipped"]:
-            st.caption(f"⚠️ {s['pages_skipped']} page(s) skipped (unreadable Urdu font). "
-                       "Urdu answers are still given by translation.")
+            st.caption(f"ℹ️ {s['pages_skipped']} PDF page(s) skipped (unreadable Urdu font); "
+                       "their content comes from Urdu_FAQ.txt instead.")
     st.markdown("**🩺 System status**")
     for name, purpose in PACKAGES.items():
         st.markdown(f"{'✅' if installed[name] else '⚠️'} **{name}** - {purpose}")
@@ -702,11 +751,13 @@ if question:
                         unsafe_allow_html=True)
         next_questions = []
         try:
-            search_query, _lang = understand_question(question, history, api_key)
-            sources = retrieve(search_query, kb) if kb else []
+            search_query, urdu_query = understand_question(question, history, api_key)
+            sources = retrieve([question, search_query, urdu_query], kb) if kb else []
             cutoff = kb["embedder"].min_relevance if kb else MIN_RELEVANCE
             low = (not sources) or sources[0]["score"] < cutoff
-            relevant = [s for s in sources if s["score"] >= cutoff * 0.8]
+            # always keep the best English and best Urdu match, plus any other good match
+            top_each = [next((s for s in sources if s["lang"] == lg), None) for lg in ("en", "ur")]
+            relevant = [s for s in sources if s in top_each or s["score"] >= cutoff * 0.8]
             raw = answer_question(question, search_query, relevant, history, settings, api_key)
             answer, next_questions = split_answer(raw)
             if not answer:
